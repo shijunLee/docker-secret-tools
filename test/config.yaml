@@ -1,0 +1,7 @@
+watchNamespaces:
+  - default
+  - secret-test
+dockerSecretNames:
+  - tpaas-itg
+  - docker-dev
+setMethod: Update
