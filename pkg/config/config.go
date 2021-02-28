@@ -2,29 +2,31 @@ package config
 
 import (
 	"fmt"
+	homedir "github.com/mitchellh/go-homedir"
+	"github.com/spf13/viper"
 	"os"
 	"path"
 	"strings"
-	homedir "github.com/mitchellh/go-homedir"
-	"github.com/spf13/viper"
 )
 
 type SetMethod string
-var(
+
+var (
 	SetMethodWebHook SetMethod = "WebHook"
-	SetMethodUpdate SetMethod = "Update"
+	SetMethodUpdate  SetMethod = "Update"
 )
 
 type Config struct {
-	WatchNamespaces []string `json:"watchNamespaces" mapstructure:"watchNamespaces"`
-	DockerSecretNames []string `json:"dockerSecretNames" mapstructure:"dockerSecretNames"`
-	SetMethod SetMethod `json:"setMethod" mapstructure:"setMethod"`
+	WatchNamespaces   []string  `json:"watchNamespaces" mapstructure:"watchNamespaces"`
+	DockerSecretNames []string  `json:"dockerSecretNames" mapstructure:"dockerSecretNames"`
+	SetMethod         SetMethod `json:"setMethod" mapstructure:"setMethod"`
+	NotManagerOwners  []string  `json:"notManagerOwners" mapstructure:"notManagerOwners"`
 }
 
-var GlobalConfig =&Config{}
+var GlobalConfig = &Config{}
 
-func InitConfig(cfgFile string)  {
-	viper.SetDefault("setMethod","WebHook")
+func InitConfig(cfgFile string) {
+	viper.SetDefault("setMethod", "WebHook")
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
