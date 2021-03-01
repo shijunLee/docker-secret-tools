@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/shijunLee/docker-secret-tools/pkg/utils"
 	"github.com/thedevsaddam/gojsonq"
+
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -19,7 +20,7 @@ import (
 	"strings"
 )
 
-type Workload struct {
+type WorkloadReconciler struct {
 	client.Client
 	Log               logr.Logger
 	Object            client.Object
@@ -27,7 +28,8 @@ type Workload struct {
 	DockerSecretNames []string
 }
 
-func (w *Workload) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (w *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+
 	var object = &unstructured.Unstructured{}
 	object.SetGroupVersionKind(w.Object.GetObjectKind().GroupVersionKind())
 	err := w.Client.Get(ctx, types.NamespacedName{Name: req.Name, Namespace: req.Namespace}, object)
@@ -66,17 +68,47 @@ func (w *Workload) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 		}
 	}
 	if len(replaceImageSecrets) > 0 {
+		var secretListKV []map[string]string
+		for _, secret := range replaceImageSecrets {
+			secretListKV = append(secretListKV, map[string]string{"name": secret})
+		}
+		var secretMaps map[string]interface{}
 		switch object.GetKind() {
 		case "Pod":
-			w.Patch(ctx, object, client.Merge)
-		default:
+			secretMaps = map[string]interface{}{
+				"spec": map[string]interface{}{
+					"imagePullSecrets": secretListKV,
+				},
+			}
 
+		default:
+			secretMaps = map[string]interface{}{
+				"spec": map[string]interface{}{
+					"template": map[string]interface{}{
+						"spec": map[string]interface{}{
+							"imagePullSecrets": secretListKV,
+						},
+					},
+				},
+			}
+		}
+		mergePatch, err := json.Marshal(secretMaps)
+		if err != nil {
+			w.Log.Error(err, "convert secret to json error")
+		}
+		err = w.Patch(ctx, object, client.RawPatch(types.StrategicMergePatchType, mergePatch))
+		if err != nil {
+			w.Log.Error(err, "patch object secret error", "Group", object.GroupVersionKind().Group,
+				"Version", object.GroupVersionKind().Version, "Kind", object.GroupVersionKind().Kind, "Name", object.GetName(),
+				"Namespace", object.GetNamespace())
+			return ctrl.Result{}, err
 		}
 	}
+
 	return ctrl.Result{}, nil
 }
 
-func (w *Workload) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+func (w *WorkloadReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(w.Object).WithEventFilter(predicate.Funcs{
 		CreateFunc: func(event event.CreateEvent) bool {
@@ -91,7 +123,7 @@ func (w *Workload) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error
 	}).Complete(w)
 }
 
-func (w *Workload) getImagesSecrets(ctx context.Context, images []string) []corev1.Secret {
+func (w *WorkloadReconciler) getImagesSecrets(ctx context.Context, images []string) []corev1.Secret {
 	var regsitrySecrets = w.getSecretAuthRegistry(ctx)
 	var result = []corev1.Secret{}
 
@@ -116,9 +148,9 @@ func (w *Workload) getImagesSecrets(ctx context.Context, images []string) []core
 	return result
 }
 
-func (w *Workload) getSecretAuthRegistry(ctx context.Context) map[string][]corev1.Secret {
+func (w *WorkloadReconciler) getSecretAuthRegistry(ctx context.Context) map[string][]corev1.Secret {
 	var result = map[string][]corev1.Secret{}
-	var secrets = w.getDockerSecrets(ctx)
+	var secrets = getDockerSecrets(ctx, w.Client, w.Log, w.DockerSecretNames)
 	for _, item := range secrets {
 		configData, ok := item.Data[".dockerconfigjson"]
 		if ok {
@@ -142,15 +174,15 @@ func (w *Workload) getSecretAuthRegistry(ctx context.Context) map[string][]corev
 	}
 	return result
 }
-func (w *Workload) getDockerSecrets(ctx context.Context) (imageSecrets []*corev1.Secret) {
-	for _, item := range w.DockerSecretNames {
+func getDockerSecrets(ctx context.Context, mgrClient client.Client, logger logr.Logger, dockerSecretNames []string) (imageSecrets []*corev1.Secret) {
+	for _, item := range dockerSecretNames {
 		var secret = &corev1.Secret{}
-		err := w.Client.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: item}, secret)
+		err := mgrClient.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: item}, secret)
 		if err != nil {
 			continue
 		}
 		if secret.Type == "kubernetes.io/dockercfg" {
-			w.Log.Info("Not support dockercfg docker secret", "SecretName", item)
+			logger.Info("Not support dockercfg docker secret", "SecretName", item)
 			continue
 		}
 		if secret.Type != "kubernetes.io/dockerconfigjson" {
@@ -161,7 +193,7 @@ func (w *Workload) getDockerSecrets(ctx context.Context) (imageSecrets []*corev1
 	return
 }
 
-func (w *Workload) filterEventObject(ctx context.Context, object client.Object) bool {
+func (w *WorkloadReconciler) filterEventObject(ctx context.Context, object client.Object) bool {
 	ownerReference := object.GetOwnerReferences()
 	if ownerReference != nil && len(ownerReference) > 0 {
 		for _, item := range ownerReference {
