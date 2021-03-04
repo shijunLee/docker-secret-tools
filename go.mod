@@ -10,6 +10,8 @@ require (
 	github.com/spf13/viper v1.7.1
 	github.com/thedevsaddam/gojsonq v2.3.0+incompatible
 	golang.org/x/tools v0.0.0-20200616133436-c1934b75d054
+	k8s.io/api v0.20.2
 	k8s.io/apimachinery v0.20.2
 	sigs.k8s.io/controller-runtime v0.8.2
+	sigs.k8s.io/yaml v1.2.0
 )

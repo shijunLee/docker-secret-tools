@@ -3,10 +3,8 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"github.com/go-logr/logr"
 	"github.com/shijunLee/docker-secret-tools/pkg/utils"
-	"github.com/thedevsaddam/gojsonq"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -16,7 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/yaml"
 	"strings"
 )
 
@@ -44,7 +41,7 @@ func (w *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err != nil {
 		w.Log.Error(err, "get json data error")
 	}
-	imageList, err := getImageFromJson(ctx, string(jsonData))
+	imageList, err := utils.GetImageFromJson(ctx, string(jsonData))
 	if err != nil {
 		w.Log.Error(err, "get image from data error")
 		return ctrl.Result{}, nil
@@ -150,11 +147,11 @@ func (w *WorkloadReconciler) getImagesSecrets(ctx context.Context, images []stri
 
 func (w *WorkloadReconciler) getSecretAuthRegistry(ctx context.Context) map[string][]corev1.Secret {
 	var result = map[string][]corev1.Secret{}
-	var secrets = getDockerSecrets(ctx, w.Client, w.Log, w.DockerSecretNames)
+	var secrets = utils.GetDockerSecrets(ctx, w.Client, w.Log, w.DockerSecretNames)
 	for _, item := range secrets {
 		configData, ok := item.Data[".dockerconfigjson"]
 		if ok {
-			var dockerSecrets = &DockerSecrets{}
+			var dockerSecrets = &utils.DockerSecrets{}
 			err := json.Unmarshal(configData, dockerSecrets)
 			if err == nil {
 				for key, _ := range dockerSecrets.Auths {
@@ -174,24 +171,6 @@ func (w *WorkloadReconciler) getSecretAuthRegistry(ctx context.Context) map[stri
 	}
 	return result
 }
-func getDockerSecrets(ctx context.Context, mgrClient client.Client, logger logr.Logger, dockerSecretNames []string) (imageSecrets []*corev1.Secret) {
-	for _, item := range dockerSecretNames {
-		var secret = &corev1.Secret{}
-		err := mgrClient.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: item}, secret)
-		if err != nil {
-			continue
-		}
-		if secret.Type == "kubernetes.io/dockercfg" {
-			logger.Info("Not support dockercfg docker secret", "SecretName", item)
-			continue
-		}
-		if secret.Type != "kubernetes.io/dockerconfigjson" {
-			continue
-		}
-		imageSecrets = append(imageSecrets, secret)
-	}
-	return
-}
 
 func (w *WorkloadReconciler) filterEventObject(ctx context.Context, object client.Object) bool {
 	ownerReference := object.GetOwnerReferences()
@@ -208,42 +187,4 @@ func (w *WorkloadReconciler) filterEventObject(ctx context.Context, object clien
 		}
 	}
 	return true
-}
-func getImageFromJson(ctx context.Context, jsonString string) (imageList []string, err error) {
-	data := gojsonq.New().FromString(jsonString).Find("spec.template.spec.containers")
-	if data == nil {
-		data = gojsonq.New().FromString(jsonString).Find("spec.containers")
-	}
-	dataInterface, ok := data.([]interface{})
-	if !ok {
-		return nil, errors.New("convert type to []interface error")
-	}
-	for _, item := range dataInterface {
-		if mapDatas, ok := item.(map[string]interface{}); ok {
-			if image, ok := mapDatas["image"]; ok {
-				imageList = append(imageList, image.(string))
-			}
-		} else {
-			return nil, errors.New("convert type to map[string]interface{} error")
-		}
-	}
-	return
-}
-
-func getImageFromYaml(ctx context.Context, yamlString string) (imageList []string, err error) {
-	jsondata, err := yaml.YAMLToJSON([]byte(yamlString))
-	if err != nil {
-		return nil, err
-	}
-	return getImageFromJson(ctx, string(jsondata))
-}
-
-type DockerSecrets struct {
-	Auths map[string]DockerAuth `json:"auths,omitempty"`
-}
-
-type DockerAuth struct {
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-	Auth     string `json:"auth,omitempty"`
 }
