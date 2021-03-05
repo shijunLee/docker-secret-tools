@@ -1,0 +1,11 @@
+apiVersion: v1
+kind:apiVersion: v1
+kind: Service
+metadata:
+  name: docker-secret-tool-webhook
+spec:
+  selector:
+    app: docker-secret-tool
+  ports:
+  - port: 80
+    targetPort: 8888

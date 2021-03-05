@@ -752,7 +752,7 @@ status:
 		t.Log(result)
 	})
 	t.Run("pod", func(t *testing.T) {
-		result, err :=utils.GetImageFromYaml(context.TODO(), podString)
+		result, err := utils.GetImageFromYaml(context.TODO(), podString)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -43,7 +43,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func (w *NamespaceReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+func (w *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).WithEventFilter(predicate.Funcs{
 		CreateFunc: func(event event.CreateEvent) bool {

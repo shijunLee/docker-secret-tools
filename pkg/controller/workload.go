@@ -106,11 +106,11 @@ func (w *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-func (w *WorkloadReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+func (w *WorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(w.Object).WithEventFilter(predicate.Funcs{
 		CreateFunc: func(event event.CreateEvent) bool {
-			return w.filterEventObject(ctx, event.Object)
+			return w.filterEventObject(event.Object)
 		},
 		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
 			return false
@@ -173,7 +173,7 @@ func (w *WorkloadReconciler) getSecretAuthRegistry(ctx context.Context) map[stri
 	return result
 }
 
-func (w *WorkloadReconciler) filterEventObject(ctx context.Context, object client.Object) bool {
+func (w *WorkloadReconciler) filterEventObject(object client.Object) bool {
 	ownerReference := object.GetOwnerReferences()
 	if ownerReference != nil && len(ownerReference) > 0 {
 		for _, item := range ownerReference {

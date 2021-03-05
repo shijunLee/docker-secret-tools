@@ -21,12 +21,14 @@ type Config struct {
 	DockerSecretNames []string  `json:"dockerSecretNames" mapstructure:"dockerSecretNames"`
 	SetMethod         SetMethod `json:"setMethod" mapstructure:"setMethod"`
 	NotManagerOwners  []string  `json:"notManagerOwners" mapstructure:"notManagerOwners"`
+	ServerPort        int       `json:"serverPort" mapstructure:"serverPort"`
 }
 
 var GlobalConfig = &Config{}
 
 func InitConfig(cfgFile string) {
 	viper.SetDefault("setMethod", "WebHook")
+	viper.SetDefault("serverPort", "8888")
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)

@@ -48,23 +48,26 @@ type Server struct {
 	dockerSecretNames []string
 	serviceName       string
 	webhookName       string
+	port              int
 }
 
 //NewServer create a new webhook http server
-func NewServer(ctx context.Context, mgr ctrl.Manager, dockerSecretNames []string) *Server {
+func NewServer(mgr ctrl.Manager, dockerSecretNames []string, port int) *Server {
 	serverInstance := &Server{
 		client:            mgr.GetClient(),
 		log:               mgr.GetLogger(),
 		dockerSecretNames: dockerSecretNames,
+		port:              port,
 	}
 	//get tls fail app can not start
-	_, cert, err := serverInstance.createTLSConfig(ctx)
+	_, cert, err := serverInstance.createTLSConfig(context.TODO())
 	if err != nil {
+		serverInstance.log.Error(err, "get server instance cert error")
 		panic(err)
 	}
 
 	var httpServer = &http.Server{
-		Addr:    ":8080",
+		Addr:    fmt.Sprintf(":%d", port),
 		Handler: serverInstance,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{
@@ -84,6 +87,7 @@ func (s *Server) Start(ctx context.Context) {
 	// webhook 创建失败，应用立即失败，否则无法使用
 	err := s.createAdmissionWebhook(ctx)
 	if err != nil {
+		s.log.Error(err, "create admission webhook error")
 		panic(err)
 	}
 	defer func() {
@@ -100,67 +104,56 @@ func (s *Server) Start(ctx context.Context) {
 }
 
 func (s *Server) createTLSConfig(ctx context.Context) (privateKey []byte, cert []byte, err error) {
-	var mutatingWebhookNotFound = false
 	var secretNotFound = false
-	var mutatingWebhookConfiguration = &admissionregistrationv1.MutatingWebhookConfiguration{}
-	err = s.client.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: mutatingWebhookConfigurationName}, mutatingWebhookConfiguration)
-	if err != nil && !k8serrors.IsNotFound(err) {
-		return nil, nil, err
-	} else if k8serrors.IsNotFound(err) {
-		mutatingWebhookNotFound = true
-	}
 	var secret = &corev1.Secret{}
-	err = s.client.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: mutatingWebhookConfigurationName}, secret)
+	var currentNamespace = utils.GetCurrentNameSpace()
+	err = s.client.Get(ctx, types.NamespacedName{Namespace: currentNamespace, Name: mutatingWebhookConfigurationName}, secret)
 	if err != nil && !k8serrors.IsNotFound(err) {
+		s.log.Error(err, "get tls secret error")
 		return nil, nil, err
 	} else if k8serrors.IsNotFound(err) {
 		secretNotFound = true
 	}
-	if mutatingWebhookNotFound || secretNotFound {
-		if !secretNotFound {
-			err = s.client.Delete(ctx, secret)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		if !mutatingWebhookNotFound {
-			err = s.client.Delete(ctx, mutatingWebhookConfiguration)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		privateKey, cert, err = utils.CreateApproveTLSCert(ctx, s.client, &utils.CertConfig{
-			CertName:     s.serviceName,
-			CertType:     utils.ServingCert,
-			CommonName:   fmt.Sprintf("%s.%s.svc", s.serviceName, utils.GetCurrentNameSpace()),
-			Organization: []string{s.serviceName},
-			DNSName: []string{
-				s.serviceName,
-				fmt.Sprintf("%s.%s.svc", s.serviceName, utils.GetCurrentNameSpace()),
-				fmt.Sprintf("%s.%s", s.serviceName, utils.GetCurrentNameSpace()),
-			},
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		secret = &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      mutatingWebhookConfigurationName,
-				Namespace: utils.GetCurrentNameSpace(),
-			},
-			Type: corev1.SecretTypeTLS,
-			Data: map[string][]byte{
-				"tls.key": privateKey,
-				"tls.crt": cert,
-			},
-		}
-		err = s.client.Create(ctx, secret)
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
+
+	if !secretNotFound {
 		privateKey = secret.Data["tls.key"]
 		cert = secret.Data["tls.crt"]
+		return
+	}
+
+	privateKey, cert, err = utils.CreateApproveTLSCert(ctx, s.client, &utils.CertConfig{
+		CertName:     s.serviceName,
+		CertType:     utils.ServingCert,
+		CommonName:   fmt.Sprintf("%s.%s.svc", s.serviceName, currentNamespace),
+		Organization: []string{s.serviceName},
+		DNSName: []string{
+			"127.0.0.1",
+			s.serviceName,
+			fmt.Sprintf("%s.%s", s.serviceName, currentNamespace),
+			fmt.Sprintf("%s.%s.svc", s.serviceName, currentNamespace),
+			fmt.Sprintf("%s.%s.svc.cluster", s.serviceName, currentNamespace),
+			fmt.Sprintf("%s.%s.svc.cluster.local", s.serviceName, currentNamespace),
+		},
+	})
+	if err != nil {
+		s.log.Error(err, "get private key and  cert error")
+		return nil, nil, err
+	}
+	secret = &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mutatingWebhookConfigurationName,
+			Namespace: currentNamespace,
+		},
+		Type: corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"tls.key": privateKey,
+			"tls.crt": cert,
+		},
+	}
+	err = s.client.Create(ctx, secret)
+	if err != nil {
+		s.log.Error(err, "create tls secret error")
+		return nil, nil, err
 	}
 	return
 }
@@ -170,11 +163,13 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 	var mutatingPath = "/mutate"
 	caBundle, err := utils.GetKubernetesCA(ctx, s.client)
 	if err != nil {
+		s.log.Error(err, "get kubernetesCA error")
 		return err
 	}
 	mutatingWebhookConfiguration := &admissionregistrationv1.MutatingWebhookConfiguration{}
 	err = s.client.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: mutatingWebhookConfigurationName}, mutatingWebhookConfiguration)
 	if err != nil && !k8serrors.IsNotFound(err) {
+		s.log.Error(err, "get mutatingWebhook error")
 		return err
 	} else if k8serrors.IsNotFound(err) {
 		mutatingWebhookConfiguration.ObjectMeta = metav1.ObjectMeta{
@@ -214,6 +209,7 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 		}
 		err = s.client.Create(ctx, mutatingWebhookConfiguration)
 		if err != nil {
+			s.log.Error(err, "create mutatingWebhook error")
 			return err
 		}
 	}
@@ -222,6 +218,7 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 		mutatingWebhookConfiguration.Webhooks[0].ClientConfig.CABundle = caBundle
 		err = s.client.Update(ctx, mutatingWebhookConfiguration)
 		if err != nil {
+			s.log.Error(err, "update mutatingWebhook error")
 			return err
 		}
 	}
@@ -230,6 +227,10 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 
 //ServeHTTP the http serve process
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/live" {
+		w.WriteHeader(200)
+		return
+	}
 	var body []byte
 	if r.Body != nil {
 		if data, err := ioutil.ReadAll(r.Body); err == nil {
@@ -237,7 +238,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(body) == 0 {
-		glog.Error("empty body")
+		s.log.Info("empty body")
 		http.Error(w, "empty body", http.StatusBadRequest)
 		return
 	}

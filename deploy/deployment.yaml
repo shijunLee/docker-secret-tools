@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docker-secret-tool
+spec:
+  selector:
+    matchLabels:
+      app: docker-secret-tool
+  template:
+    metadata:
+      labels:
+        app: docker-secret-tool
+    spec:
+      serviceAccount: docker-secret-tool
+      volumes:
+        - name: config
+          configMap:
+            name: docker-secret-tool-config
+            defaultMode: 0644
+        - name: log
+          emptyDir: {}
+      containers:
+      - name: tool
+        image: docker.shijunlee.local/library/docker-secret-tool:v0.0.1
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 8888
+          name: http
+          protocol: TCP
+        readinessProbe:
+          timeoutSeconds: 2
+          successThreshold: 2
+          initialDelaySeconds: 5
+          httpGet:
+            path: /live
+            port: http
+            scheme: HTTPS
+        livenessProbe:
+          timeoutSeconds: 2
+          successThreshold: 2
+          initialDelaySeconds: 5
+          httpGet:
+            path: /live
+            port: http
+            scheme: HTTPS
+        volumeMounts:
+          - mountPath: /etc/secretool/
+            name:  config  
+          - mountPath: /log
+            name: log  
+             

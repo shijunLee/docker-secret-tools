@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func Test_InitConfig(t *testing.T)  {
+func Test_InitConfig(t *testing.T) {
 	var cfgFile = "../../test/config.yaml"
 	InitConfig(cfgFile)
-	data,err:= json.Marshal(GlobalConfig)
-	if err!=nil{
+	data, err := json.Marshal(GlobalConfig)
+	if err != nil {
 		t.Fatal(err.Error())
 	}
 	fmt.Println(string(data))
