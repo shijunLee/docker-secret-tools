@@ -52,8 +52,8 @@ func EncodeCertificatePEM(cert *x509.Certificate) []byte {
 	})
 }
 
-// parsePEMEncodedCert parses a certificate from the given pemdata
-func parsePEMEncodedCert(pemdata []byte) (*x509.Certificate, error) {
+// ParsePEMEncodedCert parses a certificate from the given pemdata
+func ParsePEMEncodedCert(pemdata []byte) (*x509.Certificate, error) {
 	decoded, _ := pem.Decode(pemdata)
 	if decoded == nil {
 		return nil, errors.New("no PEM data found")
@@ -61,8 +61,8 @@ func parsePEMEncodedCert(pemdata []byte) (*x509.Certificate, error) {
 	return x509.ParseCertificate(decoded.Bytes)
 }
 
-// parsePEMEncodedPrivateKey parses a private key from given pemdata
-func parsePEMEncodedPrivateKey(pemdata []byte) (*rsa.PrivateKey, error) {
+// ParsePEMEncodedPrivateKey parses a private key from given pemdata
+func ParsePEMEncodedPrivateKey(pemdata []byte) (*rsa.PrivateKey, error) {
 	decoded, _ := pem.Decode(pemdata)
 	if decoded == nil {
 		return nil, errors.New("no PEM data found")
