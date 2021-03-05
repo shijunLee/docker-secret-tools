@@ -3,38 +3,41 @@ package utils
 import (
 	"context"
 	"errors"
+	"io/ioutil"
+	"os"
+
 	"github.com/go-logr/logr"
 	"github.com/thedevsaddam/gojsonq"
-	"io/ioutil"
+	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"os"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
 const currentNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
+//GetCurrentNameSpace get current pods run namespace
 func GetCurrentNameSpace() string {
 	currentNameSpace := os.Getenv("DEBUG_NAMESPACE")
 	if currentNameSpace != "" {
 		return currentNameSpace
-	} else {
-		_, err := os.Stat(currentNamespacePath)
-		if err != nil {
-			return currentNameSpace
-		} else {
-			data, err := ioutil.ReadFile(currentNamespacePath)
-			if err != nil {
-				return currentNameSpace
-			} else {
-				return string(data)
-			}
-		}
 	}
+	_, err := os.Stat(currentNamespacePath)
+	if err != nil {
+		return currentNameSpace
+	}
+	data, err := ioutil.ReadFile(currentNamespacePath)
+	if err != nil {
+		return currentNameSpace
+	}
+	return string(data)
 }
 
-func GetImageFromJson(ctx context.Context, jsonString string) (imageList []string, err error) {
+// GetImageFromJSON get image info from workload object json string
+func GetImageFromJSON(ctx context.Context, jsonString string) (imageList []string, err error) {
 	data := gojsonq.New().FromString(jsonString).Find("spec.template.spec.containers")
 	if data == nil {
 		data = gojsonq.New().FromString(jsonString).Find("spec.containers")
@@ -55,24 +58,28 @@ func GetImageFromJson(ctx context.Context, jsonString string) (imageList []strin
 	return
 }
 
+//GetImageFromYaml get image from workload object yaml
 func GetImageFromYaml(ctx context.Context, yamlString string) (imageList []string, err error) {
 	jsondata, err := yaml.YAMLToJSON([]byte(yamlString))
 	if err != nil {
 		return nil, err
 	}
-	return GetImageFromJson(ctx, string(jsondata))
+	return GetImageFromJSON(ctx, string(jsondata))
 }
 
+//DockerSecrets docker secrets object
 type DockerSecrets struct {
 	Auths map[string]DockerAuth `json:"auths,omitempty"`
 }
 
+//DockerAuth docker registry auth info
 type DockerAuth struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 	Auth     string `json:"auth,omitempty"`
 }
 
+//GetDockerSecrets get docker secrets in dockerSecretNames
 func GetDockerSecrets(ctx context.Context, mgrClient client.Client, logger logr.Logger, dockerSecretNames []string) (imageSecrets []*corev1.Secret) {
 	for _, item := range dockerSecretNames {
 		var secret = &corev1.Secret{}
@@ -90,4 +97,85 @@ func GetDockerSecrets(ctx context.Context, mgrClient client.Client, logger logr.
 		imageSecrets = append(imageSecrets, secret)
 	}
 	return
+}
+
+// GetKubernetesCA get current cluster ca
+func GetKubernetesCA(ctx context.Context, c client.Client) ([]byte, error) {
+	var result []byte
+	secretList := &corev1.SecretList{}
+	err := c.List(ctx, secretList, &client.ListOptions{Namespace: GetCurrentNameSpace()})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range secretList.Items {
+		if item.Type == corev1.SecretTypeServiceAccountToken {
+			if value, ok := item.Annotations["kubernetes.io/service-account.name"]; ok && value == "default" {
+				result = item.Data["ca.crt"]
+				return result, nil
+			}
+		}
+	}
+	return nil, errors.New("token not found")
+}
+
+//CreateApproveTLSCert create TLS cert with kubernetes Certificate Signing
+func CreateApproveTLSCert(ctx context.Context, client client.Client, config *CertConfig) (privateKeyData []byte, certificateData []byte, err error) {
+	var request = &certificatesv1.CertificateSigningRequest{}
+	err = client.Get(ctx, types.NamespacedName{Name: "docker-secret-tools", Namespace: GetCurrentNameSpace()}, request)
+	if err != nil && !k8serrors.IsNotFound(err) {
+		return nil, nil, err
+	} else if err == nil {
+		err = client.Delete(ctx, request)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	privateKey, certificateRequest, err := CreateCertificateRequest(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	var certificateRequestbytes = EncodeCertificateRequestPEM(certificateRequest)
+	certificateSigningRequest := &certificatesv1.CertificateSigningRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "docker-secret-tools",
+			Namespace: GetCurrentNameSpace(),
+		},
+		Spec: certificatesv1.CertificateSigningRequestSpec{
+			Groups: []string{
+				"system:authenticated",
+			},
+			Request: certificateRequestbytes,
+			Usages: []certificatesv1.KeyUsage{
+				certificatesv1.UsageDigitalSignature,
+				certificatesv1.UsageKeyEncipherment,
+				certificatesv1.UsageServerAuth,
+			},
+		},
+	}
+	err = client.Create(ctx, certificateSigningRequest)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = client.Get(ctx, types.NamespacedName{Name: "docker-secret-tools", Namespace: GetCurrentNameSpace()}, request)
+	if err != nil {
+		return nil, nil, err
+	}
+	request.Status.Conditions = append(request.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
+		Type:           certificatesv1.CertificateApproved,
+		Reason:         "ApprovedThisRequest",
+		Message:        "This CSR was approved by docker-secret-tools",
+		LastUpdateTime: metav1.Now(),
+	})
+	err = client.Status().Update(ctx, request)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = client.Get(ctx, types.NamespacedName{Name: "docker-secret-tools", Namespace: GetCurrentNameSpace()}, request)
+	if err != nil {
+		return nil, nil, err
+	}
+	certificateData = request.Status.Certificate
+	privateKeyData = EncodePrivateKeyPEM(privateKey)
+	return privateKeyData, certificateData, nil
 }

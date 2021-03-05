@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"testing"
+
+	"github.com/shijunLee/docker-secret-tools/pkg/utils"
 )
 
 func Test_WorkloadJsonQ(t *testing.T) {
@@ -743,14 +745,14 @@ status:
   qosClass: Burstable
   startTime: "2021-02-21T06:57:21Z"`
 	t.Run("deploy", func(t *testing.T) {
-		result, err := getImageFromYaml(context.TODO(), deploymentString)
+		result, err := utils.GetImageFromYaml(context.TODO(), deploymentString)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Log(result)
 	})
 	t.Run("pod", func(t *testing.T) {
-		result, err := getImageFromYaml(context.TODO(), podString)
+		result, err :=utils.GetImageFromYaml(context.TODO(), podString)
 		if err != nil {
 			t.Fatal(err)
 		}

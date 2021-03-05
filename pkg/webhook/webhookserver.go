@@ -4,22 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"strings"
+
 	"github.com/go-logr/logr"
 	"github.com/golang/glog"
-	"github.com/shijunLee/docker-secret-tools/pkg/utils"
-	"io/ioutil"
 	"k8s.io/api/admission/v1beta1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
-	"net/http"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
-	"strings"
+
+	"github.com/shijunLee/docker-secret-tools/pkg/utils"
 )
 
 var (
@@ -31,16 +34,23 @@ var (
 	defaulter = runtime.ObjectDefaulter(runtimeScheme)
 )
 
-type server struct {
+const (
+	mutatingWebhookConfigurationName = "docker-secret-tools-mutating-webhook"
+)
+
+//Server kubernetes Webhook server
+type Server struct {
 	server            *http.Server
 	client            client.Client
 	log               logr.Logger
 	dockerSecretNames []string
+	serviceName       string
+	webhookName       string
 }
 
 //NewServer create a new webhook http server
-func NewServer(mgr ctrl.Manager, dockerSecretNames []string) *server {
-	serverInstance := &server{
+func NewServer(mgr ctrl.Manager, dockerSecretNames []string) *Server {
+	serverInstance := &Server{
 		client:            mgr.GetClient(),
 		log:               mgr.GetLogger(),
 		dockerSecretNames: dockerSecretNames,
@@ -54,7 +64,7 @@ func NewServer(mgr ctrl.Manager, dockerSecretNames []string) *server {
 }
 
 //Start start the webhook server
-func (s *server) Start() {
+func (s *Server) Start() {
 	defer func() {
 		// 发生宕机时，获取panic传递的上下文并打印
 		err := recover()
@@ -69,8 +79,55 @@ func (s *server) Start() {
 	s.log.Error(s.server.ListenAndServe(), "web hook server error")
 }
 
+func (s *Server) createAdmissionWebhook(ctx context.Context, caBundle []byte) error {
+	var scope = admissionregistrationv1.AllScopes
+	var mutatingPath = "/mutate"
+	mutatingWebhookConfiguration := &admissionregistrationv1.MutatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mutatingWebhookConfigurationName,
+			Namespace: utils.GetCurrentNameSpace(),
+		},
+		Webhooks: []admissionregistrationv1.MutatingWebhook{
+			{
+				Name: mutatingWebhookConfigurationName,
+				Rules: []admissionregistrationv1.RuleWithOperations{
+					{
+						Operations: []admissionregistrationv1.OperationType{
+							admissionregistrationv1.Create,
+						},
+						Rule: admissionregistrationv1.Rule{
+							APIGroups:   []string{"", "apps"},
+							APIVersions: []string{"*"},
+							Resources: []string{
+								"Deployment",
+								"DaemonSet",
+								"ReplicaSet",
+								"Pod",
+							},
+							Scope: &scope,
+						},
+					},
+				},
+				ClientConfig: admissionregistrationv1.WebhookClientConfig{
+					Service: &admissionregistrationv1.ServiceReference{
+						Namespace: utils.GetCurrentNameSpace(),
+						Name:      s.serviceName,
+						Path:      &mutatingPath,
+					},
+					CABundle: caBundle,
+				},
+			},
+		},
+	}
+	err := s.client.Create(ctx, mutatingWebhookConfiguration)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 //ServeHTTP the http serve process
-func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var body []byte
 	if r.Body != nil {
 		if data, err := ioutil.ReadAll(r.Body); err == nil {
@@ -128,7 +185,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // validate deployments and services
-func (s *server) validate(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+func (s *Server) validate(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
 	return &v1beta1.AdmissionResponse{
 		Allowed: true,
 		//	Result:  result,
@@ -136,7 +193,7 @@ func (s *server) validate(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionRespons
 }
 
 // main mutation process
-func (s *server) mutate(ctx context.Context, ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+func (s *Server) mutate(ctx context.Context, ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
 	req := ar.Request
 	var patchBytes []byte
 	if req.Operation == v1beta1.Connect || req.Operation == v1beta1.Delete {
@@ -159,7 +216,7 @@ func (s *server) mutate(ctx context.Context, ar *v1beta1.AdmissionReview) *v1bet
 			}
 			jsonString = string(jsonData)
 		}
-		imageList, err := utils.GetImageFromJson(ctx, jsonString)
+		imageList, err := utils.GetImageFromJSON(ctx, jsonString)
 		if err != nil {
 			s.log.Error(err, "get image from data error")
 			break
@@ -235,7 +292,7 @@ func (s *server) mutate(ctx context.Context, ar *v1beta1.AdmissionReview) *v1bet
 
 }
 
-func (s *server) getImagesSecrets(ctx context.Context, images []string) []corev1.Secret {
+func (s *Server) getImagesSecrets(ctx context.Context, images []string) []corev1.Secret {
 	var registrySecrets = s.getSecretAuthRegistry(ctx)
 	var result = []corev1.Secret{}
 
@@ -260,7 +317,7 @@ func (s *server) getImagesSecrets(ctx context.Context, images []string) []corev1
 	return result
 }
 
-func (s *server) getSecretAuthRegistry(ctx context.Context) map[string][]corev1.Secret {
+func (s *Server) getSecretAuthRegistry(ctx context.Context) map[string][]corev1.Secret {
 	var result = map[string][]corev1.Secret{}
 	var secrets = utils.GetDockerSecrets(ctx, s.client, s.log, s.dockerSecretNames)
 	for _, item := range secrets {

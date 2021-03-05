@@ -3,9 +3,9 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"github.com/go-logr/logr"
-	"github.com/shijunLee/docker-secret-tools/pkg/utils"
+	"strings"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -14,7 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"strings"
+
+	"github.com/shijunLee/docker-secret-tools/pkg/utils"
 )
 
 type WorkloadReconciler struct {
@@ -41,7 +42,7 @@ func (w *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err != nil {
 		w.Log.Error(err, "get json data error")
 	}
-	imageList, err := utils.GetImageFromJson(ctx, string(jsonData))
+	imageList, err := utils.GetImageFromJSON(ctx, string(jsonData))
 	if err != nil {
 		w.Log.Error(err, "get image from data error")
 		return ctrl.Result{}, nil

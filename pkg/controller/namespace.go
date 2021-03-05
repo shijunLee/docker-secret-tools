@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -10,6 +11,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+
+	"github.com/shijunLee/docker-secret-tools/pkg/utils"
 )
 
 type NamespaceReconciler struct {
@@ -20,7 +23,7 @@ type NamespaceReconciler struct {
 
 //Reconcile auto create secret to new namespace
 func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	var secrets = getDockerSecrets(ctx, r.Client, r.Log, r.DockerSecretNames)
+	var secrets = utils.GetDockerSecrets(ctx, r.Client, r.Log, r.DockerSecretNames)
 	for _, item := range secrets {
 		imagePullSecret := &corev1.Secret{}
 		err := r.Client.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: item.Name}, imagePullSecret)
