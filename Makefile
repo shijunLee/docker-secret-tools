@@ -7,16 +7,20 @@ FLAGS="-X github.com/shijunLee/docker-secret-tools/pkg/version.CommitId=$(COMMIT
 IMG ?= docker.shijunlee.local/library/docker-secret-tool:$(VERSION)
 
 # Run go fmt against code
+.PHONY: fmt
 fmt:
 	go fmt ./...
 
 # Run go vet against code
+.PHONY: vet
 vet:
 	go vet ./...
 
+.PHONY: manager
 manager: fmt vet
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build  -ldflags $(FLAGS) -o bin/manager main.go && chmod +x bin/manager
 
+.PHONY: docker-build
 docker-build:
 	docker build --build-arg TAG="$(TAG)" \
     --build-arg BRANCH="$(BRANCH)" \
@@ -24,5 +28,6 @@ docker-build:
     --build-arg BUILD_TIME="$(BUILD_TIME)" -t ${IMG} .
 	docker images |grep "<none>" |awk '{print $$3}' | xargs docker rmi -f
 
+.PHONY: docker-push
 docker-push:
 	docker push ${IMG}
