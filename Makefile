@@ -32,4 +32,5 @@ docker-build:
 docker-push:
 	docker push ${IMG}
 
+.PHONY: docker-all
 docker-all: docker-build docker-push
