@@ -32,7 +32,7 @@ spec:
           protocol: TCP
         readinessProbe:
           timeoutSeconds: 2
-          successThreshold: 2
+          successThreshold: 1
           initialDelaySeconds: 5
           httpGet:
             path: /live
@@ -40,7 +40,7 @@ spec:
             scheme: HTTPS
         livenessProbe:
           timeoutSeconds: 2
-          successThreshold: 2
+          successThreshold: 1
           initialDelaySeconds: 5
           httpGet:
             path: /live

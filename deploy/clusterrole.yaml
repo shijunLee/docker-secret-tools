@@ -22,6 +22,7 @@ rules:
     resources:
       - configmaps/status
     verbs:
+      - list
       - get
       - update
       - patch
@@ -32,6 +33,7 @@ rules:
     verbs:
       - create
       - patch
+      - list
   - apiGroups:
       - ""
     resources:
@@ -41,6 +43,7 @@ rules:
       - get
       - patch
       - update
+      - list
   - apiGroups:
       - "apps"
     resources:
@@ -52,6 +55,7 @@ rules:
       - get
       - patch
       - update
+      - list
   - apiGroups:
       - "admissionregistration.k8s.io"
     resources:
@@ -62,13 +66,25 @@ rules:
       - update
       - patch
       - delete
+      - list
+  - apiGroups:
+      - coordination.k8s.io"
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
   - apiGroups:
       - "certificates.k8s.io" 
     resources:
       - "certificatesigningrequests"
       - "certificatesigningrequests/status"
+      - signers
     verbs:
       - create
       - get
       - update
-      - patch   
+      - patch
+      - list
+      - sign
+      - delete

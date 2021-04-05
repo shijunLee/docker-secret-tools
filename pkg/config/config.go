@@ -22,6 +22,7 @@ type Config struct {
 	SetMethod         SetMethod `json:"setMethod" mapstructure:"setMethod"`
 	NotManagerOwners  []string  `json:"notManagerOwners" mapstructure:"notManagerOwners"`
 	ServerPort        int       `json:"serverPort" mapstructure:"serverPort"`
+	ServiceName       string    `json:"serviceName" mapstructure:"serviceName"`
 }
 
 var GlobalConfig = &Config{}

@@ -16,7 +16,7 @@ ARG COMMIT_ID
 RUN GOPROXY=https://goproxy.cn,direct go mod download
 # Build
 RUN FLAG=`echo "-X github.com/shijunLee/docker-secret-tools/pkg/version.CommitId=${COMMIT_ID} -X github.com/shijunLee/docker-secret-tools/pkg/version.Branch=${BRANCH} -X github.com/shijunLee/docker-secret-tools/pkg/version.Tag=${TAG} -X github.com/shijunLee/docker-secret-tools/pkg/version.BuildTime=${BUILD_TIME}"` && \
-    GOPROXY=https://goproxy.io,direct CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build  -ldflags "$FLAG"  -a -o manager main.go && \
+    GOPROXY=https://goproxy.io,direct CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build  -ldflags "${FLAG}"  -a -o manager main.go && \
     chmod +X manager
 
 # Use distroless as minimal base image to package the manager binary
@@ -30,5 +30,4 @@ RUN sed -i 's!http://dl-cdn.alpinelinux.org/!https://mirrors.ustc.edu.cn/!g' /et
     update-ca-certificates
 WORKDIR /
 COPY --from=builder /workspace/manager .
-USER nonroot:nonroot
 ENTRYPOINT ["/manager"]

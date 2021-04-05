@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io/ioutil"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"os"
 
 	"github.com/go-logr/logr"
@@ -119,13 +121,14 @@ func GetKubernetesCA(ctx context.Context, c client.Client) ([]byte, error) {
 }
 
 //CreateApproveTLSCert create TLS cert with kubernetes Certificate Signing
-func CreateApproveTLSCert(ctx context.Context, client client.Client, config *CertConfig) (privateKeyData []byte, certificateData []byte, err error) {
-	var request = &certificatesv1.CertificateSigningRequest{}
-	err = client.Get(ctx, types.NamespacedName{Name: "docker-secret-tools", Namespace: GetCurrentNameSpace()}, request)
+func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *CertConfig) (privateKeyData []byte, certificateData []byte, err error) {
+	certClient := kubernetes.NewForConfigOrDie(restConfig).CertificatesV1().CertificateSigningRequests()
+
+	request, err := certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
 	if err != nil && !k8serrors.IsNotFound(err) {
 		return nil, nil, err
 	} else if err == nil {
-		err = client.Delete(ctx, request)
+		err = certClient.Delete(ctx, "docker-secret-tools", metav1.DeleteOptions{})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -144,7 +147,8 @@ func CreateApproveTLSCert(ctx context.Context, client client.Client, config *Cer
 			Groups: []string{
 				"system:authenticated",
 			},
-			Request: certificateRequestbytes,
+			SignerName: "shijunlee.net/docker-tool",
+			Request:    certificateRequestbytes,
 			Usages: []certificatesv1.KeyUsage{
 				certificatesv1.UsageDigitalSignature,
 				certificatesv1.UsageKeyEncipherment,
@@ -152,26 +156,20 @@ func CreateApproveTLSCert(ctx context.Context, client client.Client, config *Cer
 			},
 		},
 	}
-	err = client.Create(ctx, certificateSigningRequest)
+	_, err = certClient.Create(ctx, certificateSigningRequest, metav1.CreateOptions{})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	err = client.Get(ctx, types.NamespacedName{Name: "docker-secret-tools", Namespace: GetCurrentNameSpace()}, request)
+	request, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
 	if err != nil {
 		return nil, nil, err
 	}
-	request.Status.Conditions = append(request.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
-		Type:           certificatesv1.CertificateApproved,
-		Reason:         "ApprovedThisRequest",
-		Message:        "This CSR was approved by docker-secret-tools",
-		LastUpdateTime: metav1.Now(),
-	})
-	err = client.Status().Update(ctx, request)
+	_, err = certClient.UpdateApproval(ctx, "docker-secret-tools", request, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, nil, err
 	}
-	err = client.Get(ctx, types.NamespacedName{Name: "docker-secret-tools", Namespace: GetCurrentNameSpace()}, request)
+	request, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
 	if err != nil {
 		return nil, nil, err
 	}

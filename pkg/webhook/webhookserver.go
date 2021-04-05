@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	v1 "k8s.io/api/admission/v1"
+	"k8s.io/client-go/rest"
 	"net/http"
 	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/golang/glog"
-	"k8s.io/api/admission/v1beta1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,6 +39,8 @@ var (
 
 const (
 	mutatingWebhookConfigurationName = "docker-secret-tools-mutating-webhook"
+	mutatingWebhookName              = "docker-secret-tools"
+	configName                       = "docker-secret-tools.shijunlee.net"
 )
 
 //Server kubernetes Webhook server
@@ -49,15 +52,18 @@ type Server struct {
 	serviceName       string
 	webhookName       string
 	port              int
+	restConfig        *rest.Config
 }
 
 //NewServer create a new webhook http server
-func NewServer(mgr ctrl.Manager, dockerSecretNames []string, port int) *Server {
+func NewServer(mgr ctrl.Manager, dockerSecretNames []string, port int, serviceName string) *Server {
 	serverInstance := &Server{
 		client:            mgr.GetClient(),
 		log:               mgr.GetLogger(),
 		dockerSecretNames: dockerSecretNames,
 		port:              port,
+		serviceName:       serviceName,
+		restConfig:        mgr.GetConfig(),
 	}
 	//get tls fail app can not start
 	_, cert, err := serverInstance.createTLSConfig(context.TODO())
@@ -121,7 +127,7 @@ func (s *Server) createTLSConfig(ctx context.Context) (privateKey []byte, cert [
 		return
 	}
 
-	privateKey, cert, err = utils.CreateApproveTLSCert(ctx, s.client, &utils.CertConfig{
+	privateKey, cert, err = utils.CreateApproveTLSCert(ctx, s.restConfig, &utils.CertConfig{
 		CertName:     s.serviceName,
 		CertType:     utils.ServingCert,
 		CommonName:   fmt.Sprintf("%s.%s.svc", s.serviceName, currentNamespace),
@@ -167,18 +173,21 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 		return err
 	}
 	mutatingWebhookConfiguration := &admissionregistrationv1.MutatingWebhookConfiguration{}
-	err = s.client.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: mutatingWebhookConfigurationName}, mutatingWebhookConfiguration)
+	err = s.client.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: mutatingWebhookName}, mutatingWebhookConfiguration)
 	if err != nil && !k8serrors.IsNotFound(err) {
 		s.log.Error(err, "get mutatingWebhook error")
 		return err
 	} else if k8serrors.IsNotFound(err) {
 		mutatingWebhookConfiguration.ObjectMeta = metav1.ObjectMeta{
-			Name:      mutatingWebhookConfigurationName,
+			Name:      mutatingWebhookName,
 			Namespace: utils.GetCurrentNameSpace(),
 		}
+		var sideEffectsConfig = admissionregistrationv1.SideEffectClassNone
 		mutatingWebhookConfiguration.Webhooks = []admissionregistrationv1.MutatingWebhook{
 			{
-				Name: mutatingWebhookConfigurationName,
+				Name:                    configName,
+				SideEffects:             &sideEffectsConfig,
+				AdmissionReviewVersions: []string{"v1"},
 				Rules: []admissionregistrationv1.RuleWithOperations{
 					{
 						Operations: []admissionregistrationv1.OperationType{
@@ -188,10 +197,10 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 							APIGroups:   []string{"", "apps"},
 							APIVersions: []string{"*"},
 							Resources: []string{
-								"Deployment",
-								"DaemonSet",
-								"ReplicaSet",
-								"Pod",
+								"deployments",
+								"daemonsets",
+								"replicasets",
+								"pods",
 							},
 							Scope: &scope,
 						},
@@ -251,10 +260,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var admissionResponse *v1beta1.AdmissionResponse
-	ar := v1beta1.AdmissionReview{}
+	var admissionResponse *v1.AdmissionResponse
+	ar := v1.AdmissionReview{}
 	if _, _, err := deserializer.Decode(body, nil, &ar); err != nil {
-		admissionResponse = &v1beta1.AdmissionResponse{
+		admissionResponse = &v1.AdmissionResponse{
 			Result: &metav1.Status{
 				Message: err.Error(),
 			},
@@ -268,7 +277,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	admissionReview := v1beta1.AdmissionReview{}
+	admissionReview := v1.AdmissionReview{}
 	if admissionResponse != nil {
 		admissionReview.Response = admissionResponse
 		if ar.Request != nil {
@@ -288,18 +297,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // validate deployments and services
-func (s *Server) validate(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
-	return &v1beta1.AdmissionResponse{
+func (s *Server) validate(ar *v1.AdmissionReview) *v1.AdmissionResponse {
+	return &v1.AdmissionResponse{
 		Allowed: true,
 	}
 }
 
 // main mutation process
-func (s *Server) mutate(ctx context.Context, ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
+func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.AdmissionResponse {
 	req := ar.Request
 	var patchBytes []byte
-	if req.Operation == v1beta1.Connect || req.Operation == v1beta1.Delete {
-		return &v1beta1.AdmissionResponse{
+	if req.Operation == v1.Connect || req.Operation == v1.Delete {
+		return &v1.AdmissionResponse{
 			Allowed: true,
 		}
 	}
@@ -372,22 +381,22 @@ func (s *Server) mutate(ctx context.Context, ar *v1beta1.AdmissionReview) *v1bet
 			}
 		}
 	default:
-		return &v1beta1.AdmissionResponse{
+		return &v1.AdmissionResponse{
 			Allowed: true,
 		}
 	}
 
 	if len(patchBytes) > 0 {
-		return &v1beta1.AdmissionResponse{
+		return &v1.AdmissionResponse{
 			Allowed: true,
 			Patch:   patchBytes,
-			PatchType: func() *v1beta1.PatchType {
-				pt := v1beta1.PatchTypeJSONPatch
+			PatchType: func() *v1.PatchType {
+				pt := v1.PatchTypeJSONPatch
 				return &pt
 			}(),
 		}
 	} else {
-		return &v1beta1.AdmissionResponse{
+		return &v1.AdmissionResponse{
 			Allowed: true,
 		}
 	}

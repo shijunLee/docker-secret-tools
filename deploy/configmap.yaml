@@ -11,3 +11,4 @@ data:
     dockerSecretNames:
       - docker-dev
     setMethod: WebHook
+    serviceName: docker-secret-tool-webhook

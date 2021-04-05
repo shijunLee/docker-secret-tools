@@ -4,4 +4,5 @@ watchNamespaces:
 dockerSecretNames:
   - tpaas-itg
   - docker-dev
-setMethod: Update
+setMethod: WebHook
+serviceName: docker-secret-tool-webhook

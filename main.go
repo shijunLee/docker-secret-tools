@@ -10,8 +10,11 @@ import (
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 	appsv1 "k8s.io/api/apps/v1"
+	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -22,10 +25,10 @@ func main() {
 	logLevel := ""
 	logFile := ""
 	port := 0
-	pflag.StringVarP(&cfgFile, "config", "c", "", "set the default config file dir")
+	pflag.StringVarP(&cfgFile, "config", "c", "/Volumes/UPan/goworkspace/src/github.com/shijunLee/docker-secret-tools/test/config.yaml", "set the default config file dir")
 	pflag.StringVarP(&logLevel, "logLevel", "", "error", "tools log level")
-	pflag.StringVarP(&logFile, "logFile", "", "/log/tools.log", "tools log")
-	pflag.IntVarP(&port, "port", "", 0, "server start port")
+	pflag.StringVarP(&logFile, "logFile", "", "./log/tools.log", "tools log")
+	pflag.IntVarP(&port, "port", "", 8888, "server start port")
 	pflag.Parse()
 	config.InitConfig(cfgFile)
 	// init log
@@ -41,6 +44,8 @@ func main() {
 	ctrl.SetLogger(log.Logger)
 	setupLog := ctrl.Log.WithName("setup")
 	runtimeScheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(runtimeScheme))
+	utilruntime.Must(certificatesv1.AddToScheme(runtimeScheme))
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  runtimeScheme,
 		MetricsBindAddress:      "0",
@@ -67,8 +72,13 @@ func main() {
 
 	switch config.GlobalConfig.SetMethod {
 	case config.SetMethodWebHook:
-		server := webhook.NewServer(mgr, config.GlobalConfig.DockerSecretNames, config.GlobalConfig.ServerPort)
-		server.Start(context.Background())
+		go func() {
+			var ctx = context.Background()
+			for !mgr.GetCache().WaitForCacheSync(ctx) {
+			}
+			server := webhook.NewServer(mgr, config.GlobalConfig.DockerSecretNames, config.GlobalConfig.ServerPort, config.GlobalConfig.ServiceName)
+			server.Start(ctx)
+		}()
 	case config.SetMethodUpdate:
 		if err = (&controller.WorkloadReconciler{
 			Client:            mgr.GetClient(),
@@ -118,8 +128,10 @@ func main() {
 	}
 	stopSignalHandler := ctrl.SetupSignalHandler()
 	setupLog.Info("starting manager")
+
 	if err := mgr.Start(stopSignalHandler); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+
 }
