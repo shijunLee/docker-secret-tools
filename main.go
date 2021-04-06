@@ -2,11 +2,8 @@ package main
 
 import (
 	"context"
-	"github.com/shijunLee/docker-secret-tools/pkg/config"
-	"github.com/shijunLee/docker-secret-tools/pkg/controller"
-	"github.com/shijunLee/docker-secret-tools/pkg/log"
-	"github.com/shijunLee/docker-secret-tools/pkg/utils"
-	"github.com/shijunLee/docker-secret-tools/pkg/webhook"
+	"os"
+
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,9 +12,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	"github.com/shijunLee/docker-secret-tools/pkg/config"
+	"github.com/shijunLee/docker-secret-tools/pkg/controller"
+	"github.com/shijunLee/docker-secret-tools/pkg/log"
+	"github.com/shijunLee/docker-secret-tools/pkg/utils"
+	"github.com/shijunLee/docker-secret-tools/pkg/webhook"
 )
 
 func main() {
@@ -76,7 +78,7 @@ func main() {
 			var ctx = context.Background()
 			for !mgr.GetCache().WaitForCacheSync(ctx) {
 			}
-			server := webhook.NewServer(mgr, config.GlobalConfig.DockerSecretNames, config.GlobalConfig.ServerPort, config.GlobalConfig.ServiceName)
+			server := webhook.NewServer(mgr, config.GlobalConfig)
 			server.Start(ctx)
 		}()
 	case config.SetMethodUpdate:

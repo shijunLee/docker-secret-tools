@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"io/ioutil"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"os"
 
 	"github.com/go-logr/logr"
 	"github.com/thedevsaddam/gojsonq"
 	certificatesv1 "k8s.io/api/certificates/v1"
+	certificatesV1beta1 "k8s.io/api/certificates/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/certificate/csr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -122,58 +124,126 @@ func GetKubernetesCA(ctx context.Context, c client.Client) ([]byte, error) {
 
 //CreateApproveTLSCert create TLS cert with kubernetes Certificate Signing
 func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *CertConfig) (privateKeyData []byte, certificateData []byte, err error) {
-	certClient := kubernetes.NewForConfigOrDie(restConfig).CertificatesV1().CertificateSigningRequests()
-
-	request, err := certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
-	if err != nil && !k8serrors.IsNotFound(err) {
-		return nil, nil, err
-	} else if err == nil {
-		err = certClient.Delete(ctx, "docker-secret-tools", metav1.DeleteOptions{})
-		if err != nil {
+	kubeClient := kubernetes.NewForConfigOrDie(restConfig)
+	var isSupportV1 = false
+	_, err = kubeClient.ServerResourcesForGroupVersion("certificates.k8s.io/v1")
+	if err == nil {
+		isSupportV1 = true
+	}
+	if isSupportV1 {
+		certClient := kubeClient.CertificatesV1().CertificateSigningRequests()
+		_, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		if err != nil && !k8serrors.IsNotFound(err) {
 			return nil, nil, err
+		} else if err == nil {
+			err = certClient.Delete(ctx, "docker-secret-tools", metav1.DeleteOptions{})
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	} else {
+		certClient := kubeClient.CertificatesV1beta1().CertificateSigningRequests()
+		_, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		if err != nil && !k8serrors.IsNotFound(err) {
+			return nil, nil, err
+		} else if err == nil {
+			err = certClient.Delete(ctx, "docker-secret-tools", metav1.DeleteOptions{})
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 	}
+
 	privateKey, certificateRequest, err := CreateCertificateRequest(config)
 	if err != nil {
 		return nil, nil, err
 	}
 	var certificateRequestbytes = EncodeCertificateRequestPEM(certificateRequest)
-	certificateSigningRequest := &certificatesv1.CertificateSigningRequest{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "docker-secret-tools",
-			Namespace: GetCurrentNameSpace(),
-		},
-		Spec: certificatesv1.CertificateSigningRequestSpec{
-			Groups: []string{
-				"system:authenticated",
-			},
-			SignerName: "shijunlee.net/docker-tool",
-			Request:    certificateRequestbytes,
-			Usages: []certificatesv1.KeyUsage{
-				certificatesv1.UsageDigitalSignature,
-				certificatesv1.UsageKeyEncipherment,
-				certificatesv1.UsageServerAuth,
-			},
-		},
+	var usage = []certificatesv1.KeyUsage{
+		certificatesv1.UsageServerAuth,
+		certificatesv1.UsageClientAuth,
 	}
-	_, err = certClient.Create(ctx, certificateSigningRequest, metav1.CreateOptions{})
+	reqName, reqUID, err := csr.RequestCertificate(kubeClient, certificateRequestbytes, "docker-secret-tools", "shijunlee.net/docker-tool", usage, privateKey)
 	if err != nil {
 		return nil, nil, err
+	}
+	if isSupportV1 {
+		certClient := kubeClient.CertificatesV1().CertificateSigningRequests()
+		csrRequest, err := certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		if err != nil {
+			return nil, nil, err
+		}
+		csrRequest.Status.Conditions = append(csrRequest.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
+			Type:           certificatesv1.CertificateApproved,
+			Reason:         "test",
+			Message:        "This CSR was approved by test",
+			LastUpdateTime: metav1.Now(),
+			Status:         corev1.ConditionTrue,
+		})
+		_, err = certClient.UpdateApproval(ctx, "docker-secret-tools", csrRequest, metav1.UpdateOptions{})
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		certClient := kubeClient.CertificatesV1beta1().CertificateSigningRequests()
+		csrRequest, err := certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		if err != nil {
+			return nil, nil, err
+		}
+		csrRequest.Status.Conditions = append(csrRequest.Status.Conditions, certificatesV1beta1.CertificateSigningRequestCondition{
+			Type:           certificatesV1beta1.CertificateApproved,
+			Reason:         "test",
+			Message:        "This CSR was approved by test",
+			LastUpdateTime: metav1.Now(),
+			Status:         corev1.ConditionTrue,
+		})
+		_, err = certClient.UpdateApproval(ctx, csrRequest, metav1.UpdateOptions{})
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
-	request, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+	data, err := csr.WaitForCertificate(ctx, kubeClient, reqName, reqUID)
 	if err != nil {
 		return nil, nil, err
 	}
-	_, err = certClient.UpdateApproval(ctx, "docker-secret-tools", request, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, nil, err
-	}
-	request, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
-	if err != nil {
-		return nil, nil, err
-	}
-	certificateData = request.Status.Certificate
+	// certificateSigningRequest := &certificatesv1.CertificateSigningRequest{
+	// 	ObjectMeta: metav1.ObjectMeta{
+	// 		Name:      "docker-secret-tools",
+	// 		Namespace: GetCurrentNameSpace(),
+	// 	},
+	// 	Spec: certificatesv1.CertificateSigningRequestSpec{
+	// 		Groups: []string{
+	// 			"system:authenticated",
+	// 		},
+	// 		SignerName: "shijunlee.net/docker-tool",
+	// 		Request:    certificateRequestbytes,
+	// 		Usages: []certificatesv1.KeyUsage{
+	// 			certificatesv1.UsageDigitalSignature,
+	// 			certificatesv1.UsageKeyEncipherment,
+	// 			certificatesv1.UsageServerAuth,
+	// 		},
+	// 	},
+	// }
+	// _, err = certClient.Create(ctx, certificateSigningRequest, metav1.CreateOptions{})
+
+	// request, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
+	// request.Status.Conditions = append(request.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
+	// 	Type:           certificatesv1.CertificateApproved,
+	// 	Reason:         "this is for web hook server",
+	// 	Message:        "This CSR was approved by docker-secret-tools",
+	// 	LastUpdateTime: metav1.Now(),
+	// 	Status:         corev1.ConditionTrue,
+	// })
+	// request, err = certClient.UpdateApproval(ctx, "docker-secret-tools", request, metav1.UpdateOptions{})
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
+
+	certificateData = data
 	privateKeyData = EncodePrivateKeyPEM(privateKey)
 	return privateKeyData, certificateData, nil
 }

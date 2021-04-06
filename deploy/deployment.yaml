@@ -21,14 +21,14 @@ spec:
           emptyDir: {}
       containers:
       - name: tool
-        image: docker.shijunlee.local/library/docker-secret-tool:v0.0.1
+        image: docker.shijunlee.local/library/docker-secret-tool:v0.0.13
         resources:
           limits:
             memory: "128Mi"
             cpu: "500m"
         ports:
         - containerPort: 8888
-          name: http
+          name: https
           protocol: TCP
         readinessProbe:
           timeoutSeconds: 2
@@ -36,7 +36,7 @@ spec:
           initialDelaySeconds: 5
           httpGet:
             path: /live
-            port: http
+            port: https
             scheme: HTTPS
         livenessProbe:
           timeoutSeconds: 2
@@ -44,7 +44,7 @@ spec:
           initialDelaySeconds: 5
           httpGet:
             path: /live
-            port: http
+            port: https
             scheme: HTTPS
         volumeMounts:
           - mountPath: /etc/secretool/

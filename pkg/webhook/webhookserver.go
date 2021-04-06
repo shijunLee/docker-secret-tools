@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	v1 "k8s.io/api/admission/v1"
-	"k8s.io/client-go/rest"
+	"net"
 	"net/http"
 	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/golang/glog"
+	v1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,10 +21,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
+	"github.com/shijunLee/docker-secret-tools/pkg/config"
 	"github.com/shijunLee/docker-secret-tools/pkg/utils"
 )
 
@@ -50,38 +52,45 @@ type Server struct {
 	log               logr.Logger
 	dockerSecretNames []string
 	serviceName       string
-	webhookName       string
 	port              int
 	restConfig        *rest.Config
+	TLSPrivateKey     []byte
+	TLSCert           []byte
+	autoTLS           bool
+	rootCA            string
+	privateKeyFile    string
+	certFile          string
 }
 
 //NewServer create a new webhook http server
-func NewServer(mgr ctrl.Manager, dockerSecretNames []string, port int, serviceName string) *Server {
+func NewServer(mgr ctrl.Manager, serverConfig *config.Config) *Server {
 	serverInstance := &Server{
 		client:            mgr.GetClient(),
 		log:               mgr.GetLogger(),
-		dockerSecretNames: dockerSecretNames,
-		port:              port,
-		serviceName:       serviceName,
+		dockerSecretNames: serverConfig.DockerSecretNames,
+		port:              serverConfig.ServerPort,
+		serviceName:       serverConfig.ServiceName,
 		restConfig:        mgr.GetConfig(),
+		autoTLS:           serverConfig.AutoTLS,
+		rootCA:            serverConfig.RootCA,
+		privateKeyFile:    serverConfig.PrivateKeyFile,
+		certFile:          serverConfig.CertFile,
 	}
-	//get tls fail app can not start
-	_, cert, err := serverInstance.createTLSConfig(context.TODO())
-	if err != nil {
-		serverInstance.log.Error(err, "get server instance cert error")
-		panic(err)
+	if serverConfig.AutoTLS {
+		//get tls fail app can not start
+		privateKey, cert, err := serverInstance.createTLSConfig(context.TODO())
+		if err != nil {
+			serverInstance.log.Error(err, "get server instance cert error")
+			panic(err)
+		}
+		fmt.Println(string(cert))
+		serverInstance.TLSCert = cert
+		serverInstance.TLSPrivateKey = privateKey
 	}
 
 	var httpServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
+		Addr:    fmt.Sprintf(":%d", serverConfig.ServerPort),
 		Handler: serverInstance,
-		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{
-				{
-					Certificate: [][]byte{cert},
-				},
-			},
-		},
 	}
 	serverInstance.server = httpServer
 	return serverInstance
@@ -106,7 +115,29 @@ func (s *Server) Start(ctx context.Context) {
 			fmt.Println("error:", err)
 		}
 	}()
-	s.log.Error(s.server.ListenAndServe(), "web hook server error")
+
+	var ln net.Listener
+	var cert tls.Certificate
+	if s.autoTLS {
+		cert, err = tls.X509KeyPair(s.TLSCert, s.TLSPrivateKey)
+		if err != nil {
+			panic(err)
+		}
+
+	} else {
+		cert, err = tls.LoadX509KeyPair(s.certFile, s.privateKeyFile)
+		if err != nil {
+			panic(err)
+		}
+	}
+	var tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+	ln, err = tls.Listen("tcp", s.server.Addr, tlsConfig)
+	if err != nil {
+		panic(err)
+	}
+	s.log.Error(s.server.Serve(ln), "web hook server error")
 }
 
 func (s *Server) createTLSConfig(ctx context.Context) (privateKey []byte, cert []byte, err error) {
@@ -167,11 +198,16 @@ func (s *Server) createTLSConfig(ctx context.Context) (privateKey []byte, cert [
 func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 	var scope = admissionregistrationv1.AllScopes
 	var mutatingPath = "/mutate"
-	caBundle, err := utils.GetKubernetesCA(ctx, s.client)
-	if err != nil {
-		s.log.Error(err, "get kubernetesCA error")
-		return err
+	var caBundle []byte
+	var err error
+	if s.autoTLS {
+		caBundle, err = utils.GetKubernetesCA(ctx, s.client)
+		if err != nil {
+			s.log.Error(err, "get kubernetesCA error")
+			return err
+		}
 	}
+
 	mutatingWebhookConfiguration := &admissionregistrationv1.MutatingWebhookConfiguration{}
 	err = s.client.Get(ctx, types.NamespacedName{Namespace: utils.GetCurrentNameSpace(), Name: mutatingWebhookName}, mutatingWebhookConfiguration)
 	if err != nil && !k8serrors.IsNotFound(err) {
@@ -187,7 +223,7 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 			{
 				Name:                    configName,
 				SideEffects:             &sideEffectsConfig,
-				AdmissionReviewVersions: []string{"v1"},
+				AdmissionReviewVersions: []string{"v1", "v1beta1"},
 				Rules: []admissionregistrationv1.RuleWithOperations{
 					{
 						Operations: []admissionregistrationv1.OperationType{
@@ -212,9 +248,11 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 						Name:      s.serviceName,
 						Path:      &mutatingPath,
 					},
-					CABundle: caBundle,
 				},
 			},
+		}
+		if len(caBundle) > 0 {
+			mutatingWebhookConfiguration.Webhooks[0].ClientConfig.CABundle = caBundle
 		}
 		err = s.client.Create(ctx, mutatingWebhookConfiguration)
 		if err != nil {

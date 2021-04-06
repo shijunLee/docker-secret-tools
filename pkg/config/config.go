@@ -2,11 +2,12 @@ package config
 
 import (
 	"fmt"
-	homedir "github.com/mitchellh/go-homedir"
-	"github.com/spf13/viper"
 	"os"
 	"path"
 	"strings"
+
+	homedir "github.com/mitchellh/go-homedir"
+	"github.com/spf13/viper"
 )
 
 type SetMethod string
@@ -23,13 +24,18 @@ type Config struct {
 	NotManagerOwners  []string  `json:"notManagerOwners" mapstructure:"notManagerOwners"`
 	ServerPort        int       `json:"serverPort" mapstructure:"serverPort"`
 	ServiceName       string    `json:"serviceName" mapstructure:"serviceName"`
+	AutoTLS           bool      `json:"autoTLS" mapstructure:"autoTLS"`
+	CertFile          string    `json:"certFile" mapstructure:"certFile"`
+	PrivateKeyFile    string    `json:"privateKeyFile" mapstructure:"privateKeyFile"`
+	RootCA            string    `json:"rootCA" mapstructure:"rootCA"`
 }
 
 var GlobalConfig = &Config{}
 
 func InitConfig(cfgFile string) {
 	viper.SetDefault("setMethod", "WebHook")
-	viper.SetDefault("serverPort", "8888")
+	viper.SetDefault("serverPort", 8888)
+	viper.SetDefault("autoTLS", true)
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
