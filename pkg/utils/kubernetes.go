@@ -123,6 +123,7 @@ func GetKubernetesCA(ctx context.Context, c client.Client) ([]byte, error) {
 }
 
 //CreateApproveTLSCert create TLS cert with kubernetes Certificate Signing
+// Notice this is not work for the kubernetes not config cert sign config
 func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *CertConfig) (privateKeyData []byte, certificateData []byte, err error) {
 	kubeClient := kubernetes.NewForConfigOrDie(restConfig)
 	var isSupportV1 = false
