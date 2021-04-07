@@ -52,6 +52,7 @@ func InitConfig(cfgFile string) {
 		viper.AddConfigPath("/etc/secretool")
 		viper.AddConfigPath(".")
 		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
 	}
 	viper.AutomaticEnv() // read in environment variables that match
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))

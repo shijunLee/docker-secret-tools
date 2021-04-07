@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name:  docker-secret-tool
+  name: docker-secret-tool
 rules:
   - apiGroups:
       - ""
@@ -9,6 +9,8 @@ rules:
       - configmaps
       - secrets
       - pods
+      - namespaces
+      - services
     verbs:
       - get
       - list
@@ -68,23 +70,15 @@ rules:
       - delete
       - list
   - apiGroups:
-      - coordination.k8s.io"
+      - coordination.k8s.io
+      - admissionregistration.k8s.io
     resources:
-      - leases
+      - "*"
     verbs:
-      - get
-      - list
+      - "*"
   - apiGroups:
       - "certificates.k8s.io" 
     resources:
-      - "certificatesigningrequests"
-      - "certificatesigningrequests/status"
-      - signers
+      - "*"
     verbs:
-      - create
-      - get
-      - update
-      - patch
-      - list
-      - sign
-      - delete
+      - "*"

@@ -21,7 +21,10 @@ spec:
           emptyDir: {}
       containers:
       - name: tool
-        image: docker.shijunlee.local/library/docker-secret-tool:v0.0.13
+        image: docker.shijunlee.local/library/docker-secret-tool:v0.0.22
+        args:
+          - --config=/etc/secretool/config.yaml
+          - --logLevel=debug
         resources:
           limits:
             memory: "128Mi"
@@ -33,7 +36,9 @@ spec:
         readinessProbe:
           timeoutSeconds: 2
           successThreshold: 1
-          initialDelaySeconds: 5
+          failureThreshold: 3
+          periodSeconds: 5
+          initialDelaySeconds: 120
           httpGet:
             path: /live
             port: https
@@ -41,7 +46,9 @@ spec:
         livenessProbe:
           timeoutSeconds: 2
           successThreshold: 1
-          initialDelaySeconds: 5
+          failureThreshold: 3
+          periodSeconds: 5
+          initialDelaySeconds: 120
           httpGet:
             path: /live
             port: https

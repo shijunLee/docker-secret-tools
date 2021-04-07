@@ -64,6 +64,7 @@ type Server struct {
 
 //NewServer create a new webhook http server
 func NewServer(mgr ctrl.Manager, serverConfig *config.Config) *Server {
+	fmt.Println("create new server")
 	serverInstance := &Server{
 		client:            mgr.GetClient(),
 		log:               mgr.GetLogger(),
@@ -76,8 +77,10 @@ func NewServer(mgr ctrl.Manager, serverConfig *config.Config) *Server {
 		privateKeyFile:    serverConfig.PrivateKeyFile,
 		certFile:          serverConfig.CertFile,
 	}
+	fmt.Println("auto tls", serverConfig.AutoTLS)
 	if serverConfig.AutoTLS {
 		//get tls fail app can not start
+		fmt.Println("start auto tls")
 		privateKey, cert, err := serverInstance.createTLSConfig(context.TODO())
 		if err != nil {
 			serverInstance.log.Error(err, "get server instance cert error")
@@ -141,6 +144,7 @@ func (s *Server) Start(ctx context.Context) {
 }
 
 func (s *Server) createTLSConfig(ctx context.Context) (privateKey []byte, cert []byte, err error) {
+	fmt.Println("start createTLSConfig")
 	var secretNotFound = false
 	var secret = &corev1.Secret{}
 	var currentNamespace = utils.GetCurrentNameSpace()
@@ -218,12 +222,14 @@ func (s *Server) createAdmissionWebhook(ctx context.Context) error {
 			Name:      mutatingWebhookName,
 			Namespace: utils.GetCurrentNameSpace(),
 		}
+		var failurePolicy = admissionregistrationv1.Ignore
 		var sideEffectsConfig = admissionregistrationv1.SideEffectClassNone
 		mutatingWebhookConfiguration.Webhooks = []admissionregistrationv1.MutatingWebhook{
 			{
 				Name:                    configName,
 				SideEffects:             &sideEffectsConfig,
 				AdmissionReviewVersions: []string{"v1", "v1beta1"},
+				FailurePolicy:           &failurePolicy,
 				Rules: []admissionregistrationv1.RuleWithOperations{
 					{
 						Operations: []admissionregistrationv1.OperationType{

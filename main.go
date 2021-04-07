@@ -71,13 +71,19 @@ func main() {
 	if port > 0 {
 		config.GlobalConfig.ServerPort = port
 	}
-
+	setupLog.Info("config info", "ConfigInfo", config.GlobalConfig)
 	switch config.GlobalConfig.SetMethod {
 	case config.SetMethodWebHook:
+		setupLog.Info("start config webhook")
 		go func() {
+			setupLog.Info("start web hook server")
 			var ctx = context.Background()
-			for !mgr.GetCache().WaitForCacheSync(ctx) {
+			for {
+				if mgr.GetCache().WaitForCacheSync(ctx) {
+					break
+				}
 			}
+			setupLog.Info("waitForCacheSync")
 			server := webhook.NewServer(mgr, config.GlobalConfig)
 			server.Start(ctx)
 		}()

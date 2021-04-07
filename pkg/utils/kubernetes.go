@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 
@@ -122,9 +123,12 @@ func GetKubernetesCA(ctx context.Context, c client.Client) ([]byte, error) {
 	return nil, errors.New("token not found")
 }
 
+var csrName = "docker-secret-tool-webhook.tool-test"
+
 //CreateApproveTLSCert create TLS cert with kubernetes Certificate Signing
 // Notice this is not work for the kubernetes not config cert sign config
 func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *CertConfig) (privateKeyData []byte, certificateData []byte, err error) {
+	fmt.Println("start CreateApproveTLSCert")
 	kubeClient := kubernetes.NewForConfigOrDie(restConfig)
 	var isSupportV1 = false
 	_, err = kubeClient.ServerResourcesForGroupVersion("certificates.k8s.io/v1")
@@ -133,22 +137,22 @@ func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *
 	}
 	if isSupportV1 {
 		certClient := kubeClient.CertificatesV1().CertificateSigningRequests()
-		_, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		_, err = certClient.Get(ctx, csrName, metav1.GetOptions{})
 		if err != nil && !k8serrors.IsNotFound(err) {
 			return nil, nil, err
 		} else if err == nil {
-			err = certClient.Delete(ctx, "docker-secret-tools", metav1.DeleteOptions{})
+			err = certClient.Delete(ctx, csrName, metav1.DeleteOptions{})
 			if err != nil {
 				return nil, nil, err
 			}
 		}
 	} else {
 		certClient := kubeClient.CertificatesV1beta1().CertificateSigningRequests()
-		_, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		_, err = certClient.Get(ctx, csrName, metav1.GetOptions{})
 		if err != nil && !k8serrors.IsNotFound(err) {
 			return nil, nil, err
 		} else if err == nil {
-			err = certClient.Delete(ctx, "docker-secret-tools", metav1.DeleteOptions{})
+			err = certClient.Delete(ctx, csrName, metav1.DeleteOptions{})
 			if err != nil {
 				return nil, nil, err
 			}
@@ -164,13 +168,13 @@ func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *
 		certificatesv1.UsageServerAuth,
 		certificatesv1.UsageClientAuth,
 	}
-	reqName, reqUID, err := csr.RequestCertificate(kubeClient, certificateRequestbytes, "docker-secret-tools", "shijunlee.net/docker-tool", usage, privateKey)
+	reqName, reqUID, err := csr.RequestCertificate(kubeClient, certificateRequestbytes, csrName, "kubernetes.io/legacy-unknown", usage, privateKey)
 	if err != nil {
 		return nil, nil, err
 	}
 	if isSupportV1 {
 		certClient := kubeClient.CertificatesV1().CertificateSigningRequests()
-		csrRequest, err := certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		csrRequest, err := certClient.Get(ctx, csrName, metav1.GetOptions{})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -181,13 +185,13 @@ func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *
 			LastUpdateTime: metav1.Now(),
 			Status:         corev1.ConditionTrue,
 		})
-		_, err = certClient.UpdateApproval(ctx, "docker-secret-tools", csrRequest, metav1.UpdateOptions{})
+		_, err = certClient.UpdateApproval(ctx, csrName, csrRequest, metav1.UpdateOptions{})
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
 		certClient := kubeClient.CertificatesV1beta1().CertificateSigningRequests()
-		csrRequest, err := certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
+		csrRequest, err := certClient.Get(ctx, csrName, metav1.GetOptions{})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -203,7 +207,7 @@ func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *
 			return nil, nil, err
 		}
 	}
-
+	fmt.Println("start WaitForCertificate")
 	data, err := csr.WaitForCertificate(ctx, kubeClient, reqName, reqUID)
 	if err != nil {
 		return nil, nil, err
