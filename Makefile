@@ -34,3 +34,7 @@ docker-push:
 
 .PHONY: docker-all
 docker-all: docker-build docker-push
+
+.PHONY: local-debug
+local-debug: docker-build
+	kubectl set image deployments/docker-secret-tool -n tool-test  tool=${IMG}

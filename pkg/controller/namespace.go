@@ -26,11 +26,16 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var secrets = utils.GetDockerSecrets(ctx, r.Client, r.Log, r.DockerSecretNames)
 	for _, item := range secrets {
 		imagePullSecret := &corev1.Secret{}
-		err := r.Client.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: item.Name}, imagePullSecret)
+		var namespace = req.Name
+		if namespace == "" {
+			namespace = "default"
+		}
+		err := r.Client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: item.Name}, imagePullSecret)
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
 				var secret = *item
-				secret.Namespace = req.Namespace
+
+				secret.Namespace = namespace
 				secret.ObjectMeta.ResourceVersion = ""
 				err := r.Client.Create(ctx, &secret)
 				if err != nil {

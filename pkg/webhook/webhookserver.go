@@ -15,6 +15,7 @@ import (
 	"github.com/golang/glog"
 	v1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,6 +45,12 @@ const (
 	mutatingWebhookName              = "docker-secret-tools"
 	configName                       = "docker-secret-tools.shijunlee.net"
 )
+
+type JSONPath struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value"`
+}
 
 //Server kubernetes Webhook server
 type Server struct {
@@ -321,19 +328,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	admissionReview := v1.AdmissionReview{}
+	admissionReview := v1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "AdmissionReview",
+			APIVersion: "admission.k8s.io/v1",
+		},
+	}
 	if admissionResponse != nil {
 		admissionReview.Response = admissionResponse
 		if ar.Request != nil {
 			admissionReview.Response.UID = ar.Request.UID
 		}
 	}
-
 	resp, err := json.Marshal(admissionReview)
+	s.log.Info("resp info", "Resp", string(resp))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("could not encode response: %v", err), http.StatusInternalServerError)
 	}
-
+	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write(resp); err != nil {
 
 		http.Error(w, fmt.Sprintf("could not write response: %v", err), http.StatusInternalServerError)
@@ -349,7 +361,9 @@ func (s *Server) validate(ar *v1.AdmissionReview) *v1.AdmissionResponse {
 
 // main mutation process
 func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.AdmissionResponse {
+
 	req := ar.Request
+	s.log.Info("get mutate event", "AdmissionReview", ar, req.Kind.Kind, req.Kind.Group, req.Name, req.Namespace)
 	var patchBytes []byte
 	if req.Operation == v1.Connect || req.Operation == v1.Delete {
 		return &v1.AdmissionResponse{
@@ -361,9 +375,11 @@ func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.Admissi
 		jsonOrYamlData := req.Object.Raw
 		jsonString := ""
 		var rawString = string(jsonOrYamlData)
+		s.log.Info("json data info", "JSON data", rawString)
 		if strings.HasPrefix(strings.TrimLeft(rawString, " "), "{") {
 			jsonString = rawString
 		} else {
+
 			jsonData, err := yaml.YAMLToJSON(jsonOrYamlData)
 			if err != nil {
 				s.log.Error(err, "get raw data from not json error", "RawData", rawString)
@@ -371,15 +387,19 @@ func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.Admissi
 			}
 			jsonString = string(jsonData)
 		}
+		s.log.Info("json json String", "JSON  String", jsonString)
 		imageList, err := utils.GetImageFromJSON(ctx, jsonString)
 		if err != nil {
 			s.log.Error(err, "get image from data error")
 			break
 		}
+		s.log.Info("imageList", "imageList", imageList)
 		if len(imageList) == 0 {
+			s.log.Info("imageList not found")
 			break
 		}
 		imageSecrets := s.getImagesSecrets(ctx, imageList)
+		s.log.Info("get image secrets", "imageSecrets", imageSecrets)
 		var replaceImageSecrets []string
 		for _, item := range imageSecrets {
 			var secret = &corev1.Secret{}
@@ -392,46 +412,58 @@ func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.Admissi
 				} else {
 					replaceImageSecrets = append(replaceImageSecrets, item.Name)
 				}
+			} else {
+				replaceImageSecrets = append(replaceImageSecrets, item.Name)
 			}
 		}
+		s.log.Info("get replace Image Secrets", "replaceImageSecrets", replaceImageSecrets)
 		if len(replaceImageSecrets) > 0 {
 			var secretListKV []map[string]string
 			for _, secret := range replaceImageSecrets {
 				secretListKV = append(secretListKV, map[string]string{"name": secret})
 			}
-			var secretMaps map[string]interface{}
+			var jsonPatchs []JSONPath
+
 			switch req.Kind.Kind {
 			case "Pod":
-				secretMaps = map[string]interface{}{
-					"spec": map[string]interface{}{
-						"imagePullSecrets": secretListKV,
-					},
+
+				var jsonPatch = JSONPath{
+					Op:    "add",
+					Path:  "/spec/imagePullSecrets",
+					Value: secretListKV,
 				}
 
+				jsonPatchs = append(jsonPatchs, jsonPatch)
+
 			default:
-				secretMaps = map[string]interface{}{
-					"spec": map[string]interface{}{
-						"template": map[string]interface{}{
-							"spec": map[string]interface{}{
-								"imagePullSecrets": secretListKV,
-							},
-						},
-					},
+
+				var jsonPatch = JSONPath{
+					Op:    "add",
+					Path:  "/spec/template/spec/imagePullSecrets",
+					Value: secretListKV,
 				}
+				jsonPatchs = append(jsonPatchs, jsonPatch)
+
 			}
-			patchBytes, err = json.Marshal(secretMaps)
+			//	[{"op": "add", "path": "/spec/replicas", "value": 3}]
+			patchBytes, err = json.Marshal(jsonPatchs)
 			if err != nil {
 				s.log.Error(err, "convert secret to json error")
 			}
+			s.log.Info("patch data", "patch", string(patchBytes))
 		}
 	default:
+		s.log.Info("return admission for kind not support")
 		return &v1.AdmissionResponse{
 			Allowed: true,
+			UID:     req.UID,
 		}
 	}
 
 	if len(patchBytes) > 0 {
+		s.log.Info("return admission patch data", "patch", string(patchBytes))
 		return &v1.AdmissionResponse{
+			UID:     req.UID,
 			Allowed: true,
 			Patch:   patchBytes,
 			PatchType: func() *v1.PatchType {
@@ -440,11 +472,142 @@ func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.Admissi
 			}(),
 		}
 	} else {
+		s.log.Info("return no patch for support")
 		return &v1.AdmissionResponse{
 			Allowed: true,
+			UID:     req.UID,
 		}
 	}
+}
 
+func getImages(data []byte, kind string) []string {
+	var result []string
+	var podInfo = getPodTemplate(data, kind)
+	if podInfo == nil {
+		return nil
+	}
+	for _, c := range podInfo.Containers {
+		result = append(result, c.Image)
+	}
+	return result
+}
+
+func applySecret(data []byte, kind string, secrets []string) []byte {
+	switch kind {
+	case "Deployment":
+		var deployment = &appsv1.Deployment{}
+		err := json.Unmarshal(data, deployment)
+		if err != nil {
+			return data
+		}
+		for _, item := range secrets {
+			deployment.Spec.Template.Spec.ImagePullSecrets = append(deployment.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+		}
+		resultData, err := json.Marshal(deployment)
+		if err != nil {
+			return data
+		}
+		return resultData
+	case "DaemonSet":
+		var ds = &appsv1.DaemonSet{}
+		err := json.Unmarshal(data, ds)
+		if err != nil {
+			return data
+		}
+		for _, item := range secrets {
+			ds.Spec.Template.Spec.ImagePullSecrets = append(ds.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+		}
+		resultData, err := json.Marshal(ds)
+		if err != nil {
+			return data
+		}
+		return resultData
+	case "StatefulSet":
+		var sts = &appsv1.StatefulSet{}
+		err := json.Unmarshal(data, sts)
+		if err != nil {
+			return data
+		}
+		for _, item := range secrets {
+			sts.Spec.Template.Spec.ImagePullSecrets = append(sts.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+		}
+		resultData, err := json.Marshal(sts)
+		if err != nil {
+			return data
+		}
+		return resultData
+	case "ReplicaSet":
+		var rs = &appsv1.ReplicaSet{}
+		err := json.Unmarshal(data, rs)
+		if err != nil {
+			return data
+		}
+		for _, item := range secrets {
+			rs.Spec.Template.Spec.ImagePullSecrets = append(rs.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+		}
+		resultData, err := json.Marshal(rs)
+		if err != nil {
+			return data
+		}
+		return resultData
+	case "Pod":
+		var pod = &corev1.Pod{}
+		err := json.Unmarshal(data, pod)
+		if err != nil {
+			return data
+		}
+		for _, item := range secrets {
+			pod.Spec.ImagePullSecrets = append(pod.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+		}
+		resultData, err := json.Marshal(pod)
+		if err != nil {
+			return data
+		}
+		return resultData
+	}
+	return data
+}
+
+func getPodTemplate(data []byte, kind string) *corev1.PodSpec {
+	switch kind {
+	case "Deployment":
+		var deployment = &appsv1.Deployment{}
+		err := json.Unmarshal(data, deployment)
+		if err != nil {
+			return nil
+		}
+		return &(deployment.Spec.Template.Spec)
+	case "DaemonSet":
+		var ds = &appsv1.DaemonSet{}
+		err := json.Unmarshal(data, ds)
+		if err != nil {
+			return nil
+		}
+		return &(ds.Spec.Template.Spec)
+	case "StatefulSet":
+		var sts = &appsv1.StatefulSet{}
+		err := json.Unmarshal(data, sts)
+		if err != nil {
+			return nil
+		}
+		return &(sts.Spec.Template.Spec)
+	case "ReplicaSet":
+		var rs = &appsv1.ReplicaSet{}
+		err := json.Unmarshal(data, rs)
+		if err != nil {
+			return nil
+		}
+		return &(rs.Spec.Template.Spec)
+	case "Pod":
+		var pod = &corev1.Pod{}
+		err := json.Unmarshal(data, pod)
+		if err != nil {
+			return nil
+		}
+		return &(pod.Spec)
+	}
+
+	return nil
 }
 
 func (s *Server) getImagesSecrets(ctx context.Context, images []string) []corev1.Secret {

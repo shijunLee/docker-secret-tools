@@ -180,8 +180,8 @@ func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *
 		}
 		csrRequest.Status.Conditions = append(csrRequest.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
 			Type:           certificatesv1.CertificateApproved,
-			Reason:         "test",
-			Message:        "This CSR was approved by test",
+			Reason:         "docker secret tools webhook",
+			Message:        "This CSR was approved by docker-tools",
 			LastUpdateTime: metav1.Now(),
 			Status:         corev1.ConditionTrue,
 		})
@@ -212,42 +212,6 @@ func CreateApproveTLSCert(ctx context.Context, restConfig *rest.Config, config *
 	if err != nil {
 		return nil, nil, err
 	}
-	// certificateSigningRequest := &certificatesv1.CertificateSigningRequest{
-	// 	ObjectMeta: metav1.ObjectMeta{
-	// 		Name:      "docker-secret-tools",
-	// 		Namespace: GetCurrentNameSpace(),
-	// 	},
-	// 	Spec: certificatesv1.CertificateSigningRequestSpec{
-	// 		Groups: []string{
-	// 			"system:authenticated",
-	// 		},
-	// 		SignerName: "shijunlee.net/docker-tool",
-	// 		Request:    certificateRequestbytes,
-	// 		Usages: []certificatesv1.KeyUsage{
-	// 			certificatesv1.UsageDigitalSignature,
-	// 			certificatesv1.UsageKeyEncipherment,
-	// 			certificatesv1.UsageServerAuth,
-	// 		},
-	// 	},
-	// }
-	// _, err = certClient.Create(ctx, certificateSigningRequest, metav1.CreateOptions{})
-
-	// request, err = certClient.Get(ctx, "docker-secret-tools", metav1.GetOptions{})
-	// if err != nil {
-	// 	return nil, nil, err
-	// }
-	// request.Status.Conditions = append(request.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
-	// 	Type:           certificatesv1.CertificateApproved,
-	// 	Reason:         "this is for web hook server",
-	// 	Message:        "This CSR was approved by docker-secret-tools",
-	// 	LastUpdateTime: metav1.Now(),
-	// 	Status:         corev1.ConditionTrue,
-	// })
-	// request, err = certClient.UpdateApproval(ctx, "docker-secret-tools", request, metav1.UpdateOptions{})
-	// if err != nil {
-	// 	return nil, nil, err
-	// }
-
 	certificateData = data
 	privateKeyData = EncodePrivateKeyPEM(privateKey)
 	return privateKeyData, certificateData, nil

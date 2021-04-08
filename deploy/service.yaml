@@ -6,5 +6,5 @@ spec:
   selector:
     app: docker-secret-tool
   ports:
-  - port: 80
+  - port: 443
     targetPort: 8888

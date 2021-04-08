@@ -11,7 +11,7 @@
             "mode": "debug",
             "program": "${workspaceFolder}/main.go", 
             "args": [ "-c" ,"/Users/lishijun1/Documents/goworkspace/src/github.com/shijunLee/docker-secret-tools/test/config.yaml"],
-            "env": {"KUBECONFIG":"/Users/lishijun1/.kube/test-config","DEBUG_NAMESPACE":"tool-test"}
+            "env": {"KUBECONFIG":"/Users/lishijun1/.kube/config","DEBUG_NAMESPACE":"tool-test"}
         }
     ]
 }

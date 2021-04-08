@@ -7,9 +7,9 @@ metadata:
 data:
   config.yaml: |
     watchNamespaces:
-      - tools-test
+      - tool-test
     dockerSecretNames:
-      - docker-dev
+      - tpaas-itg
     setMethod: WebHook
     serviceName: docker-secret-tool-webhook
     autoTLS: true
