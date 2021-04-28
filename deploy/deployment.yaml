@@ -21,7 +21,7 @@ spec:
           emptyDir: {}
       containers:
       - name: tool
-        image: docker.shijunlee.local/library/docker-secret-tool:v0.0.39
+        image: docker.shijunlee.local/library/docker-secret-tool:v0.0.50
         args:
           - --config=/etc/secretool/config.yaml
           - --logLevel=debug
@@ -38,7 +38,7 @@ spec:
           successThreshold: 1
           failureThreshold: 3
           periodSeconds: 5
-          initialDelaySeconds: 120
+          initialDelaySeconds: 30
           httpGet:
             path: /live
             port: https

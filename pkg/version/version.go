@@ -1,7 +1,7 @@
 package version
 
 const (
-	version = "v0.0.39"
+	version = "v0.0.50"
 )
 
 var (

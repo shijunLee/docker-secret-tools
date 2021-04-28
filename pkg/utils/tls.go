@@ -20,16 +20,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"reflect"
-	"strings"
-	"unsafe"
-
 	v1 "k8s.io/api/core/v1"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"strings"
 )
 
 // CertType defines the type of the cert.
@@ -81,29 +78,16 @@ func GenerateCert(config *CertConfig) (*rsa.PrivateKey, *x509.Certificate, *x509
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	//fmt.Println(BytesToString(encodeCertificatePEM(caCert)))
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	key, err := newPrivateKey()
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	cert, err := newSignedCertificate(config, key, caCert, caKey)
-	//fmt.Println(BytesToString(encodeCertificatePEM(cert)))
-	//fmt.Println(BytesToString(encodePrivateKeyPEM(key)))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	return key, caCert, cert, nil
 
-}
-
-//BytesToString convert bytes to string
-func BytesToString(b []byte) string {
-	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	sh := reflect.StringHeader{Data: bh.Data, Len: bh.Len}
-	return *(*string)(unsafe.Pointer((&sh)))
 }
 
 func verifyConfig(config *CertConfig) error {

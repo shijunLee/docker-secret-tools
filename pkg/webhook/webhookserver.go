@@ -6,8 +6,8 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"gomodules.xyz/jsonpatch/v2"
 	"io/ioutil"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"net"
 	"net/http"
 	"strings"
@@ -364,7 +364,7 @@ func (s *Server) validate(ar *v1.AdmissionReview) *v1.AdmissionResponse {
 func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.AdmissionResponse {
 
 	req := ar.Request
-	s.log.Info("get mutate event", "AdmissionReview", ar, req.Kind.Kind, req.Kind.Group, req.Name, req.Namespace)
+	s.log.Info("get mutate event", req.Kind.Kind, req.Kind.Group, req.Name, req.Namespace)
 	var patchBytes []byte
 	if req.Operation == v1.Connect || req.Operation == v1.Delete {
 		return &v1.AdmissionResponse{
@@ -388,7 +388,7 @@ func (s *Server) mutate(ctx context.Context, ar *v1.AdmissionReview) *v1.Admissi
 			}
 			jsonString = string(jsonData)
 		}
-		s.log.Info("json json String", "JSON  String", jsonString)
+		s.log.Info("json String", "JSON  String", jsonString)
 		imageList, err := utils.GetImageFromJSON(ctx, jsonString)
 		if err != nil {
 			s.log.Error(err, "get image from data error")
@@ -462,7 +462,20 @@ func getImages(data []byte, kind string) []string {
 	return result
 }
 
+func localObjectReferenceContain(localObjectReference corev1.LocalObjectReference, array []corev1.LocalObjectReference) bool {
+	if len(array) == 0 {
+		return false
+	}
+	for _, item := range array {
+		if localObjectReference.Name == item.Name {
+			return true
+		}
+	}
+	return false
+}
+
 func applySecret(data []byte, kind string, secrets []string) []byte {
+	var operations []jsonpatch.Operation
 	switch kind {
 	case "Deployment":
 		var deployment = &appsv1.Deployment{}
@@ -470,22 +483,23 @@ func applySecret(data []byte, kind string, secrets []string) []byte {
 		if err != nil {
 			return nil
 		}
-		for _, item := range secrets {
-			deployment.Spec.Template.Spec.ImagePullSecrets = append(deployment.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
-		}
 		newDeployment := deployment.DeepCopy()
 		for _, item := range secrets {
-			newDeployment.Spec.Template.Spec.ImagePullSecrets = append(newDeployment.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+			var secretItem = corev1.LocalObjectReference{Name: item}
+			if !localObjectReferenceContain(secretItem, deployment.Spec.Template.Spec.ImagePullSecrets) {
+				deployment.Spec.Template.Spec.ImagePullSecrets = append(deployment.Spec.Template.Spec.ImagePullSecrets)
+			}
 		}
 		newDeploymentData, err := json.Marshal(newDeployment)
 		if err != nil {
 			return nil
 		}
-		resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newDeploymentData, appsv1.Deployment{})
+		//resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newDeploymentData, appsv1.Deployment{})
+		resultData, err := jsonpatch.CreatePatch(data, newDeploymentData)
 		if err != nil {
 			return nil
 		}
-		return resultData
+		operations = resultData
 	case "DaemonSet":
 		var ds = &appsv1.DaemonSet{}
 		err := json.Unmarshal(data, ds)
@@ -494,17 +508,22 @@ func applySecret(data []byte, kind string, secrets []string) []byte {
 		}
 		newDS := ds.DeepCopy()
 		for _, item := range secrets {
-			newDS.Spec.Template.Spec.ImagePullSecrets = append(newDS.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+			var secretItem = corev1.LocalObjectReference{Name: item}
+			if !localObjectReferenceContain(secretItem, newDS.Spec.Template.Spec.ImagePullSecrets) {
+				newDS.Spec.Template.Spec.ImagePullSecrets = append(newDS.Spec.Template.Spec.ImagePullSecrets)
+			}
 		}
 		newDSData, err := json.Marshal(newDS)
 		if err != nil {
 			return nil
 		}
-		resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newDSData, appsv1.DaemonSet{})
+
+		//resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newDSData, appsv1.DaemonSet{})
+		resultData, err := jsonpatch.CreatePatch(data, newDSData)
 		if err != nil {
 			return nil
 		}
-		return resultData
+		operations = resultData
 	case "StatefulSet":
 		var sts = &appsv1.StatefulSet{}
 		err := json.Unmarshal(data, sts)
@@ -513,17 +532,21 @@ func applySecret(data []byte, kind string, secrets []string) []byte {
 		}
 		newSTS := sts.DeepCopy()
 		for _, item := range secrets {
-			newSTS.Spec.Template.Spec.ImagePullSecrets = append(newSTS.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+			var secretItem = corev1.LocalObjectReference{Name: item}
+			if !localObjectReferenceContain(secretItem, newSTS.Spec.Template.Spec.ImagePullSecrets) {
+				newSTS.Spec.Template.Spec.ImagePullSecrets = append(newSTS.Spec.Template.Spec.ImagePullSecrets)
+			}
 		}
 		newSTSData, err := json.Marshal(newSTS)
 		if err != nil {
 			return nil
 		}
-		resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newSTSData, appsv1.StatefulSet{})
+		//resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newSTSData, appsv1.StatefulSet{})
+		resultData, err := jsonpatch.CreatePatch(data, newSTSData)
 		if err != nil {
 			return nil
 		}
-		return resultData
+		operations = resultData
 	case "ReplicaSet":
 		var rs = &appsv1.ReplicaSet{}
 		err := json.Unmarshal(data, rs)
@@ -532,17 +555,21 @@ func applySecret(data []byte, kind string, secrets []string) []byte {
 		}
 		newRS := rs.DeepCopy()
 		for _, item := range secrets {
-			newRS.Spec.Template.Spec.ImagePullSecrets = append(newRS.Spec.Template.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+			var secretItem = corev1.LocalObjectReference{Name: item}
+			if !localObjectReferenceContain(secretItem, newRS.Spec.Template.Spec.ImagePullSecrets) {
+				newRS.Spec.Template.Spec.ImagePullSecrets = append(newRS.Spec.Template.Spec.ImagePullSecrets)
+			}
 		}
 		newRSData, err := json.Marshal(newRS)
 		if err != nil {
 			return nil
 		}
-		resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newRSData, appsv1.ReplicaSet{})
+		//resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newRSData, appsv1.ReplicaSet{})
+		resultData, err := jsonpatch.CreatePatch(data, newRSData)
 		if err != nil {
 			return nil
 		}
-		return resultData
+		operations = resultData
 	case "Pod":
 		var pod = &corev1.Pod{}
 		err := json.Unmarshal(data, pod)
@@ -551,19 +578,30 @@ func applySecret(data []byte, kind string, secrets []string) []byte {
 		}
 		newPod := pod.DeepCopy()
 		for _, item := range secrets {
-			newPod.Spec.ImagePullSecrets = append(newPod.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: item})
+			var secretItem = corev1.LocalObjectReference{Name: item}
+			if !localObjectReferenceContain(secretItem, newPod.Spec.ImagePullSecrets) {
+				newPod.Spec.ImagePullSecrets = append(newPod.Spec.ImagePullSecrets)
+			}
 		}
 		newPodData, err := json.Marshal(newPod)
 		if err != nil {
 			return nil
 		}
-		resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newPodData, corev1.Pod{})
+		//resultData, err := strategicpatch.CreateTwoWayMergePatch(data, newPodData, corev1.Pod{})
+		resultData, err := jsonpatch.CreatePatch(data, newPodData)
 		if err != nil {
 			return nil
 		}
-		return resultData
+		operations = resultData
 	}
-	return data
+	if len(operations) > 0 {
+		operationData, err := json.Marshal(operations)
+		if err != nil {
+			return nil
+		}
+		return operationData
+	}
+	return nil
 }
 
 func getPodTemplate(data []byte, kind string) *corev1.PodSpec {
